@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LAN Chess</title>
+  <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="engine-warning" hidden></div>
+  <main class="layout">
+    <section class="board-col">
+      <div class="strip" id="top"><span class="dot"></span><span class="name"></span><span class="badge" hidden>ENGINE</span></div>
+      <div id="board"></div>
+      <div class="strip" id="bottom"><span class="dot"></span><span class="name"></span><span class="badge" hidden>ENGINE</span></div>
+    </section>
+    <aside class="side">
+      <label class="name-box">
+        <span>Your name</span>
+        <input id="player-name" maxlength="18" placeholder="Player 1" />
+      </label>
+      <div id="role"></div>
+      <div id="status"></div>
+      <div class="timer-box">
+        <div class="timer-head">
+          <span>Timer</span>
+          <strong id="timer-display">No time</strong>
+        </div>
+        <div class="timer-controls">
+          <select id="time-select">
+            <option value="0">No time</option>
+            <option value="60">1 min</option>
+            <option value="180" selected>3 min</option>
+            <option value="300">5 min</option>
+            <option value="600">10 min</option>
+          </select>
+          <select id="increment-select">
+            <option value="0" selected>+0s</option>
+            <option value="2">+2s</option>
+            <option value="5">+5s</option>
+            <option value="10">+10s</option>
+          </select>
+          <button id="timer-reset">Reset</button>
+        </div>
+      </div>
+      <div id="moves"></div>
+      <div class="controls">
+        <button id="engine-btn" class="wide" disabled><span class="sw"></span>Engine Mode</button>
+        <button id="flip">Flip board</button>
+        <button id="new-game" disabled>New game</button>
+        <button id="resign" disabled>Resign</button>
+        <button id="export">Export PGN</button>
+        <button id="analyze">Analyze on Chess.com</button>
+        <button id="lichess-analyze" class="wide">Analyze on Lichess</button>
+      </div>
+      <div class="invite"><input id="invite" readonly><button id="copy">Copy</button></div>
+    </aside>
+  </main>
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>
