@@ -190,16 +190,23 @@ io.on('connection', socket => {
   socket.on('undo-request', () => {
     const c = ctx();
     if (!c?.color || outcome(c.r) || c.r.chess.history().length < 2) return;
-    c.r.pendingUndo = { by: c.color, at: Date.now() };
-    io.to(c.room).emit('undo-requested', { by: c.color });
+
+    const previous = c.r.chess.undo();
+    c.r.pendingUndo = null;
+    if (previous) {
+      c.r.lastMove = null;
+      if (c.r.timer.limit > 0) {
+        c.r.timer.active = c.r.chess.turn();
+        c.r.timer.started = c.r.chess.history().length > 0;
+      }
+    }
     push(c.room, c.r);
   });
 
   socket.on('undo-accept', () => {
     const c = ctx();
-    if (!c?.color || !c.r.pendingUndo || c.r.pendingUndo.by === c.color) return;
+    if (!c?.color || c.r.chess.history().length < 2) return;
     const previous = c.r.chess.undo();
-    c.r.pendingUndo = null;
     if (previous) {
       c.r.lastMove = null;
       if (c.r.timer.limit > 0) {

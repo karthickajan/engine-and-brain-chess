@@ -10,11 +10,16 @@
 <body>
   <div id="engine-warning" hidden></div>
   <main class="layout">
-    <section class="board-col">
-      <div class="strip" id="top"><span class="dot"></span><span class="name"></span><span class="badge" hidden>ENGINE</span></div>
-      <div id="board"></div>
-      <div class="strip" id="bottom"><span class="dot"></span><span class="name"></span><span class="badge" hidden>ENGINE</span></div>
-    </section>
+    <div class="board-shell">
+      <div id="eval-rail" class="eval-rail" hidden>
+        <div class="eval-rail-fill" id="eval-rail-fill"></div>
+      </div>
+      <section class="board-col">
+        <div class="strip" id="top"><span class="dot"></span><span class="name"></span><span class="badge" hidden>ENGINE</span></div>
+        <div id="board"></div>
+        <div class="strip" id="bottom"><span class="dot"></span><span class="name"></span><span class="badge" hidden>ENGINE</span></div>
+      </section>
+    </div>
     <aside class="side">
       <label class="name-box">
         <span>Your name</span>
@@ -53,7 +58,8 @@
       </div>
       <div id="moves"></div>
       <div class="controls">
-        <button id="engine-btn" class="wide" disabled><span class="sw"></span>Engine Mode</button>
+        <button id="engine-btn" class="wide toggle-btn" disabled><span class="sw"></span>Engine Mode</button>
+        <button id="eval-btn" class="wide toggle-btn"><span class="sw"></span>Eval</button>
         <button id="flip">Flip board</button>
         <button id="undo-btn" disabled>Undo</button>
         <button id="new-game" disabled>New game</button>

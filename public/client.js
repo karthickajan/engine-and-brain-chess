@@ -30,11 +30,12 @@ class Engine {
     this.cur = null;
     this.eval = 0;
     this.w.onmessage = ({ data }) => {
-      const scoreMatch = /score\s+(?:cp|mate)\s+(-?\d+)/i.exec(data || '');
+      const scoreMatch = /score\s+(cp|mate)\s+(-?\d+)/i.exec(data || '');
       if (scoreMatch) {
-        const val = Number(scoreMatch[1]);
-        this.eval = /score\s+mate/i.test(data) ? (val > 0 ? 9.9 : -9.9) : val / 100;
-        this.onEval(this.eval);
+        const type = scoreMatch[1].toLowerCase();
+        const val = Number(scoreMatch[2]);
+        this.eval = type === 'mate' ? val : val / 100;
+        this.onEval(type === 'mate' ? { kind: 'mate', value: val } : { kind: 'cp', value: val / 100 });
       }
       const m = /^bestmove (\S+)/.exec(data);
       if (!m) return;
@@ -66,8 +67,18 @@ const socket = io();
 const game = new Chess();
 let color = null, state = null, flip = false, hint = null, board;
 let selectedSquare = null;
+window.__lanChessDebug = () => ({
+  color,
+  state: state ? { ...state, turn: state.turn, result: state.result } : null,
+  selectedSquare,
+  canPlay: canPlay(),
+  gameFen: game.fen(),
+  turn: game.turn(),
+});
 let timerState = { mode: 'normal', limit: 180, increment: 0, white: 180, black: 180, active: 'w', started: false };
 let evalValue = 0;
+let evalMate = null;
+let evalEnabled = false;
 
 const other = c => (c === 'w' ? 'b' : 'w');
 const bottom = () => (flip ? other(color || 'w') : color || 'w');
@@ -75,6 +86,13 @@ const myEngine = () => !!(color && state && state.engine[color]);
 const canPlay = () => !!(color && state && !state.result && state.turn === color);
 const key = s => [s.fen, s.result, color && s.engine[color]].join();
 const COLORS_OPP = () => ['w', 'b'].filter(c => c !== color);
+const formatEvalText = () => {
+  if (evalMate !== null && Number.isFinite(evalMate)) {
+    const mateMoves = Math.abs(evalMate);
+    return evalMate > 0 ? `#${mateMoves}` : `#-${mateMoves}`;
+  }
+  return `${evalValue >= 0 ? '+' : ''}${evalValue.toFixed(2)}`;
+};
 
 function formatClock(seconds, includeIncrement = false) {
   if (!Number.isFinite(seconds) || seconds <= 0) return 'No time';
@@ -114,7 +132,13 @@ const engine = new Engine(
     if (state && fen === state.fen && myEngine() && canPlay()) { hint = mv.slice(0, 2); paint(); }
   },
   score => {
-    evalValue = Number.isFinite(score) ? score : 0;
+    if (score && typeof score === 'object' && score.kind === 'mate') {
+      evalMate = Number.isFinite(score.value) ? score.value : null;
+      evalValue = evalMate !== null ? (evalMate > 0 ? 10 : -10) : 0;
+    } else {
+      evalMate = null;
+      evalValue = Number.isFinite(score && score.value !== undefined ? score.value : score) ? (score && score.value !== undefined ? score.value : score) : 0;
+    }
     updateEvalUI();
   }
 );
@@ -122,8 +146,9 @@ const engine = new Engine(
 function refreshHint() {
   hint = null;
   evalValue = 0;
-  $('#eval-panel').attr('hidden', 'hidden');
-  if (myEngine() && canPlay()) {
+  evalMate = null;
+  updateEvalUI();
+  if (myEngine()) {
     engine.analyze(state.fen);
   } else {
     engine.cancel();
@@ -131,13 +156,23 @@ function refreshHint() {
 }
 
 function updateEvalUI() {
-  const active = myEngine() && canPlay() && Number.isFinite(evalValue);
-  const display = `${evalValue >= 0 ? '+' : ''}${evalValue.toFixed(2)}`;
-  $('#eval-value').text(display);
+  const active = evalEnabled && myEngine() && Number.isFinite(evalValue);
+  $('#eval-value').text(formatEvalText());
   $('#eval-panel').prop('hidden', !active);
-  if (!active) return;
-  const pct = Math.max(0, Math.min(100, ((evalValue + 10) / 20) * 100));
+  $('#eval-rail').prop('hidden', !active);
+  if (!active) {
+    $('#eval-fill').css('width', '50%');
+    $('#eval-rail-fill').css('height', '50%');
+    return;
+  }
+
+  const raw = evalMate !== null && Number.isFinite(evalMate) ? Math.abs(evalMate) : Math.abs(evalValue);
+  const pct = evalMate !== null && Number.isFinite(evalMate)
+    ? Math.max(18, Math.min(100, (raw / 10) * 100))
+    : Math.max(0, Math.min(100, ((raw + 10) / 20) * 100));
+  const pctHeight = Math.max(10, Math.min(100, pct));
   $('#eval-fill').css('width', `${pct}%`);
+  $('#eval-rail-fill').css('height', `${pctHeight}%`);
 }
 
 function syncOrientation() {
@@ -146,7 +181,7 @@ function syncOrientation() {
 }
 
 function highlightLegalMoves(square) {
-  $('#board .square-55d63').removeClass('legal-move legal-capture');
+  $('#board .square-55d63').removeClass('legal-move legal-capture highlight1-32417 highlight2-9c5d2');
   if (!square) return;
   const legal = game.moves({ square, verbose: true }) || [];
   legal.forEach(move => {
@@ -155,8 +190,56 @@ function highlightLegalMoves(square) {
   });
 }
 
+function clearSelection() {
+  selectedSquare = null;
+  highlightLegalMoves(null);
+  paint();
+}
+
+function selectSquare(square) {
+  const legal = game.moves({ square, verbose: true }) || [];
+  if (!legal.length) {
+    clearSelection();
+    return;
+  }
+
+  selectedSquare = square;
+  highlightLegalMoves(square);
+  paint();
+}
+
+function handleSquareClick(square, piece) {
+  if (!square || !canPlay()) {
+    clearSelection();
+    return;
+  }
+
+  if (selectedSquare) {
+    if (selectedSquare === square) {
+      clearSelection();
+      return;
+    }
+
+    if (piece && piece.color === color) {
+      selectSquare(square);
+      return;
+    }
+
+    if (tryMove(selectedSquare, square)) return;
+    clearSelection();
+    return;
+  }
+
+  if (!piece || piece.color !== color) {
+    clearSelection();
+    return;
+  }
+
+  selectSquare(square);
+}
+
 function paint() {
-  $('#board .square-55d63').removeClass('last-move in-check hint selected-square');
+  $('#board .square-55d63').removeClass('last-move in-check hint selected-square highlight1-32417 highlight2-9c5d2');
   const sq = s => $('#board .square-' + s);
   if (state && state.lastMove) {
     sq(state.lastMove.from).add(sq(state.lastMove.to)).addClass('last-move');
@@ -230,39 +313,15 @@ board = Chessboard('board', {
     if (tryMove(from, to)) return;
     return 'snapback';
   },
-  onClickSquare: (square, piece) => {
-    if (!canPlay()) {
-      selectedSquare = null;
-      highlightLegalMoves(null);
-      paint();
-      return;
-    }
-    if (!piece) {
-      if (selectedSquare && tryMove(selectedSquare, square)) return;
-      selectedSquare = null;
-      highlightLegalMoves(null);
-      paint();
-      return;
-    }
-    if (piece[0] !== color) {
-      if (selectedSquare && tryMove(selectedSquare, square)) return;
-      selectedSquare = null;
-      highlightLegalMoves(null);
-      paint();
-      return;
-    }
-    if (selectedSquare === square) {
-      selectedSquare = null;
-      highlightLegalMoves(null);
-      paint();
-      return;
-    }
-    const legal = game.moves({ square, verbose: true }) || [];
-    selectedSquare = legal.length ? square : null;
-    highlightLegalMoves(selectedSquare);
-    paint();
-  },
   onSnapEnd: () => board.position(game.fen()),
+});
+
+$('#board').on('pointerdown', '.square-55d63', function (event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const square = $(this).data('square');
+  const piece = game.get(square);
+  handleSquareClick(square, piece);
 });
 
 $('#player-name').val(playerName());
@@ -296,10 +355,27 @@ socket.on('engine-mode-toggled', d => {
 });
 
 $('#engine-btn').on('click', () => socket.emit('engine-mode-toggle', !myEngine()));
+$('#eval-btn').on('click', () => {
+  evalEnabled = !evalEnabled;
+  $('#eval-btn').toggleClass('on', evalEnabled);
+  updateEvalUI();
+  if (evalEnabled && myEngine() && state) {
+    engine.analyze(state.fen);
+  }
+});
 $('#flip').on('click', () => { if (!state) return; flip = !flip; syncOrientation(); renderMeta(); paint(); });
 $('#undo-btn').on('click', () => {
   if (!state || !color || state.result) return;
-  socket.emit('undo-request');
+  socket.emit('undo-request'); 
+});
+$(document).on('click', e => {
+  const boardNode = $('#board')[0];
+  if (!boardNode || boardNode.contains(e.target)) return;
+  if (selectedSquare) {
+    selectedSquare = null;
+    highlightLegalMoves(null);
+    paint();
+  }
 });
 $('#new-game').on('click', () => confirm('Start a new game?') && socket.emit('new-game'));
 $('#resign').on('click', () => confirm('Resign?') && socket.emit('resign'));
