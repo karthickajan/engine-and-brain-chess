@@ -88,6 +88,7 @@ const snapshot = r => {
     status: o ? `${o.reason} · ${o.result}` : `${NAMES[turn]} to move${r.chess.inCheck() ? ' (check)' : ''}`,
     seated: { w: !!r.sockets.w, b: !!r.sockets.b },
     engine: r.engine,
+    pendingUndo: r.pendingUndo || null,
     timer: { ...r.timer, display: timerText },
   };
 };
@@ -180,8 +181,31 @@ io.on('connection', socket => {
     base.timer.white = base.timer.limit;
     base.timer.black = base.timer.limit;
     Object.assign(c.r, base);
+    delete c.r.pendingUndo;
     if (c.r.sockets.w && c.r.sockets.b) for (const k of ['seats', 'sockets']) [c.r[k].w, c.r[k].b] = [c.r[k].b, c.r[k].w];
     announceSeats(c.r);
+    push(c.room, c.r);
+  });
+
+  socket.on('undo-request', () => {
+    const c = ctx();
+    if (!c?.color || outcome(c.r) || c.r.chess.history().length < 2) return;
+    c.r.pendingUndo = { by: c.color, at: Date.now() };
+    io.to(c.room).emit('undo-requested', { by: c.color });
+    push(c.room, c.r);
+  });
+
+  socket.on('undo-accept', () => {
+    const c = ctx();
+    if (!c?.color || !c.r.pendingUndo || c.r.pendingUndo.by === c.color) return;
+    const previous = c.r.chess.undo();
+    c.r.pendingUndo = null;
+    if (previous) {
+      c.r.lastMove = null;
+      if (c.r.timer.limit > 0) {
+        c.r.timer.active = c.r.chess.turn();
+      }
+    }
     push(c.room, c.r);
   });
 

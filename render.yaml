@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: engine-and-brain-chess
+    env: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /lan
+    autoDeploy: true

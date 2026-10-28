@@ -20,14 +20,22 @@ let room = location.hash.slice(1);
 if (!/^[\w-]{1,32}$/.test(room)) location.hash = room = rand().slice(0, 6);
 
 class Engine {
-  constructor(onBest) {
+  constructor(onBest, onEval) {
     const src = URL.createObjectURL(new Blob([`importScripts('${STOCKFISH_URL}')`], { type: 'text/javascript' }));
     this.w = new Worker(src);
-    this.onBest = onBest;
+    this.onBest = onBest || (() => {});
+    this.onEval = onEval || (() => {});
     this.busy = false;
     this.queued = null;
     this.cur = null;
+    this.eval = 0;
     this.w.onmessage = ({ data }) => {
+      const scoreMatch = /score\s+(?:cp|mate)\s+(-?\d+)/i.exec(data || '');
+      if (scoreMatch) {
+        const val = Number(scoreMatch[1]);
+        this.eval = /score\s+mate/i.test(data) ? (val > 0 ? 9.9 : -9.9) : val / 100;
+        this.onEval(this.eval);
+      }
       const m = /^bestmove (\S+)/.exec(data);
       if (!m) return;
       this.busy = false;
@@ -59,6 +67,7 @@ const game = new Chess();
 let color = null, state = null, flip = false, hint = null, board;
 let selectedSquare = null;
 let timerState = { mode: 'normal', limit: 180, increment: 0, white: 180, black: 180, active: 'w', started: false };
+let evalValue = 0;
 
 const other = c => (c === 'w' ? 'b' : 'w');
 const bottom = () => (flip ? other(color || 'w') : color || 'w');
@@ -100,13 +109,35 @@ function resetTimer() {
   socket.emit('timer-config', { limit, increment });
 }
 
-const engine = new Engine((fen, mv) => {
-  if (state && fen === state.fen && myEngine() && canPlay()) { hint = mv.slice(0, 2); paint(); }
-});
+const engine = new Engine(
+  (fen, mv) => {
+    if (state && fen === state.fen && myEngine() && canPlay()) { hint = mv.slice(0, 2); paint(); }
+  },
+  score => {
+    evalValue = Number.isFinite(score) ? score : 0;
+    updateEvalUI();
+  }
+);
 
 function refreshHint() {
   hint = null;
-  myEngine() && canPlay() ? engine.analyze(state.fen) : engine.cancel();
+  evalValue = 0;
+  $('#eval-panel').attr('hidden', 'hidden');
+  if (myEngine() && canPlay()) {
+    engine.analyze(state.fen);
+  } else {
+    engine.cancel();
+  }
+}
+
+function updateEvalUI() {
+  const active = myEngine() && canPlay() && Number.isFinite(evalValue);
+  const display = `${evalValue >= 0 ? '+' : ''}${evalValue.toFixed(2)}`;
+  $('#eval-value').text(display);
+  $('#eval-panel').prop('hidden', !active);
+  if (!active) return;
+  const pct = Math.max(0, Math.min(100, ((evalValue + 10) / 20) * 100));
+  $('#eval-fill').css('width', `${pct}%`);
 }
 
 function syncOrientation() {
@@ -125,7 +156,7 @@ function highlightLegalMoves(square) {
 }
 
 function paint() {
-  $('#board .square-55d63').removeClass('last-move in-check hint');
+  $('#board .square-55d63').removeClass('last-move in-check hint selected-square');
   const sq = s => $('#board .square-' + s);
   if (state && state.lastMove) {
     sq(state.lastMove.from).add(sq(state.lastMove.to)).addClass('last-move');
@@ -135,6 +166,7 @@ function paint() {
       if (p && p.type === 'k' && p.color === game.turn()) sq(SQ[c] + (8 - r)).addClass('in-check');
     }));
   }
+  if (selectedSquare) sq(selectedSquare).addClass('selected-square');
   if (hint) sq(hint).addClass('hint');
 }
 
@@ -155,6 +187,7 @@ function renderMeta() {
   const seatActive = !!(color && state.seated[color]);
   $('#engine-btn').toggleClass('on', myEngine()).prop('disabled', !seatActive);
   $('#new-game').prop('disabled', !color);
+  $('#undo-btn').prop('disabled', !color || !!state.result || !state.history.length);
   $('#resign').prop('disabled', !color || !!state.result);
   $('#role').text(color ? `You play ${NAMES[color]}` : 'Spectating');
   $('#status').text(state.status);
@@ -166,6 +199,21 @@ function renderMeta() {
   $('#moves').html(rows.join('')).scrollTop(1e6);
 }
 
+function tryMove(from, to) {
+  if (!from || !to || from === to) return false;
+  const legal = game.moves({ square: from, verbose: true }) || [];
+  const move = legal.find(m => m.to === to);
+  if (!move) return false;
+  const made = game.move({ from, to, promotion: 'q' });
+  if (!made) return false;
+  selectedSquare = null;
+  highlightLegalMoves(null);
+  hint = null;
+  paint();
+  socket.emit('move', { from, to, promotion: 'q' });
+  return true;
+}
+
 board = Chessboard('board', {
   draggable: true,
   position: 'start',
@@ -174,46 +222,45 @@ board = Chessboard('board', {
     if (!canPlay() || piece[0] !== color) return false;
     selectedSquare = source;
     highlightLegalMoves(source);
+    paint();
     return true;
   },
   onDrop: (from, to) => {
-    if (to === 'offboard' || from === to) return 'snapback';
-    if (!game.move({ from, to, promotion: 'q' })) return 'snapback';
-    selectedSquare = null;
-    highlightLegalMoves(null);
-    hint = null;
-    paint();
-    socket.emit('move', { from, to, promotion: 'q' });
+    if (to === 'offboard') return 'snapback';
+    if (tryMove(from, to)) return;
+    return 'snapback';
   },
   onClickSquare: (square, piece) => {
-    if (!canPlay() || !piece || piece[0] !== color) {
-      if (!piece && selectedSquare) {
-        const legal = game.moves({ square: selectedSquare, verbose: true }) || [];
-        const move = legal.find(m => m.to === square);
-        if (move) {
-          const made = game.move({ from: selectedSquare, to: square, promotion: 'q' });
-          if (made) {
-            socket.emit('move', { from: selectedSquare, to: square, promotion: 'q' });
-            selectedSquare = null;
-            highlightLegalMoves(null);
-            return;
-          }
-        }
-      }
+    if (!canPlay()) {
       selectedSquare = null;
       highlightLegalMoves(null);
+      paint();
+      return;
+    }
+    if (!piece) {
+      if (selectedSquare && tryMove(selectedSquare, square)) return;
+      selectedSquare = null;
+      highlightLegalMoves(null);
+      paint();
+      return;
+    }
+    if (piece[0] !== color) {
+      if (selectedSquare && tryMove(selectedSquare, square)) return;
+      selectedSquare = null;
+      highlightLegalMoves(null);
+      paint();
       return;
     }
     if (selectedSquare === square) {
       selectedSquare = null;
       highlightLegalMoves(null);
+      paint();
       return;
     }
     const legal = game.moves({ square, verbose: true }) || [];
-    if (legal.length) {
-      selectedSquare = square;
-      highlightLegalMoves(square);
-    }
+    selectedSquare = legal.length ? square : null;
+    highlightLegalMoves(selectedSquare);
+    paint();
   },
   onSnapEnd: () => board.position(game.fen()),
 });
@@ -250,6 +297,10 @@ socket.on('engine-mode-toggled', d => {
 
 $('#engine-btn').on('click', () => socket.emit('engine-mode-toggle', !myEngine()));
 $('#flip').on('click', () => { if (!state) return; flip = !flip; syncOrientation(); renderMeta(); paint(); });
+$('#undo-btn').on('click', () => {
+  if (!state || !color || state.result) return;
+  socket.emit('undo-request');
+});
 $('#new-game').on('click', () => confirm('Start a new game?') && socket.emit('new-game'));
 $('#resign').on('click', () => confirm('Resign?') && socket.emit('resign'));
 $('#export').on('click', () => {
@@ -261,8 +312,9 @@ $('#export').on('click', () => {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 });
-$('#analyze').on('click', () => state && window.open('https://www.chess.com/analysis?pgn=' + encodeURIComponent(state.pgn), '_blank', 'noopener'));
-$('#lichess-analyze').on('click', () => state && window.open('https://lichess.org/analysis/pgn/' + encodeURIComponent(state.pgn), '_blank', 'noopener'));
+const lichessFen = fen => fen.replace(/\s+/g, '_');
+$('#analyze').on('click', () => state && window.open(`https://www.chess.com/analysis?fen=${encodeURIComponent(state.fen)}`, '_blank', 'noopener'));
+$('#lichess-analyze').on('click', () => state && window.open(`https://lichess.org/analysis/${lichessFen(state.fen)}`, '_blank', 'noopener'));
 $('#copy').on('click', () => { $('#invite').trigger('select'); document.execCommand('copy'); });
 $('#invite').on('click', e => e.target.select());
 $(window).on('resize', () => { board.resize(); paint(); });

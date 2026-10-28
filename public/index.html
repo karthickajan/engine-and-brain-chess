@@ -44,15 +44,23 @@
           <button id="timer-reset">Reset</button>
         </div>
       </div>
+      <div id="eval-panel" class="eval-panel" hidden>
+        <div class="eval-head">
+          <span>Eval</span>
+          <strong id="eval-value">+0.00</strong>
+        </div>
+        <div class="eval-meter"><div id="eval-fill"></div></div>
+      </div>
       <div id="moves"></div>
       <div class="controls">
         <button id="engine-btn" class="wide" disabled><span class="sw"></span>Engine Mode</button>
         <button id="flip">Flip board</button>
+        <button id="undo-btn" disabled>Undo</button>
         <button id="new-game" disabled>New game</button>
         <button id="resign" disabled>Resign</button>
         <button id="export">Export PGN</button>
-        <button id="analyze">Analyze on Chess.com</button>
-        <button id="lichess-analyze" class="wide">Analyze on Lichess</button>
+        <button id="analyze">Analyze</button>
+        <button id="lichess-analyze" class="wide">Lichess</button>
       </div>
       <div class="invite"><input id="invite" readonly><button id="copy">Copy</button></div>
     </aside>
