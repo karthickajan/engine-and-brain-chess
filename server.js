@@ -135,6 +135,7 @@ io.on('connection', socket => {
     try {
       const mv = r.chess.move({ from: m.from, to: m.to, promotion: m.promotion || 'q' });
       r.lastMove = { from: mv.from, to: mv.to };
+      r.pendingUndo = null;
       if (r.timer.limit > 0) {
         r.timer[color] = Math.max(0, r.timer[color] + (r.timer.increment || 0));
         if (!r.timer.started && r.chess.history().length >= 2) {
@@ -190,7 +191,14 @@ io.on('connection', socket => {
   socket.on('undo-request', () => {
     const c = ctx();
     if (!c?.color || outcome(c.r) || c.r.chess.history().length < 2) return;
+    if (c.r.pendingUndo && c.r.pendingUndo.by === c.color) return;
+    c.r.pendingUndo = { by: c.color };
+    push(c.room, c.r);
+  });
 
+  socket.on('undo-accept', () => {
+    const c = ctx();
+    if (!c?.color || !c.r.pendingUndo || c.r.pendingUndo.by === c.color || c.r.chess.history().length < 2) return;
     const previous = c.r.chess.undo();
     c.r.pendingUndo = null;
     if (previous) {
@@ -203,16 +211,10 @@ io.on('connection', socket => {
     push(c.room, c.r);
   });
 
-  socket.on('undo-accept', () => {
+  socket.on('undo-decline', () => {
     const c = ctx();
-    if (!c?.color || c.r.chess.history().length < 2) return;
-    const previous = c.r.chess.undo();
-    if (previous) {
-      c.r.lastMove = null;
-      if (c.r.timer.limit > 0) {
-        c.r.timer.active = c.r.chess.turn();
-      }
-    }
+    if (!c?.color || !c.r.pendingUndo) return;
+    c.r.pendingUndo = null;
     push(c.room, c.r);
   });
 

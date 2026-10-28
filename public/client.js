@@ -280,6 +280,11 @@ function renderMeta() {
     rows.push(`<span class="n">${i / 2 + 1}</span><span class="m${i === h.length - 1 ? ' cur' : ''}">${h[i]}</span><span class="m${i + 1 === h.length - 1 ? ' cur' : ''}">${h[i + 1] ?? ''}</span>`);
   }
   $('#moves').html(rows.join('')).scrollTop(1e6);
+
+  const pendingByMe = !!state.pendingUndo && state.pendingUndo.by === color;
+  const pendingFromOpponent = !!state.pendingUndo && state.pendingUndo.by !== color;
+  $('#undo-btn').text(pendingFromOpponent ? 'Accept undo' : (pendingByMe ? 'Undo pending' : 'Undo'));
+  $('#undo-btn').prop('disabled', !color || !!state.result || !state.history.length || pendingByMe);
 }
 
 function tryMove(from, to) {
@@ -322,6 +327,12 @@ $('#board').on('pointerdown', '.square-55d63', function (event) {
   const square = $(this).data('square');
   const piece = game.get(square);
   handleSquareClick(square, piece);
+});
+$('#board').on('click', '.square-55d63', function (event) {
+  if (window.matchMedia('(pointer: coarse)').matches) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
 });
 
 $('#player-name').val(playerName());
@@ -366,11 +377,18 @@ $('#eval-btn').on('click', () => {
 $('#flip').on('click', () => { if (!state) return; flip = !flip; syncOrientation(); renderMeta(); paint(); });
 $('#undo-btn').on('click', () => {
   if (!state || !color || state.result) return;
-  socket.emit('undo-request'); 
+  if (state.pendingUndo && state.pendingUndo.by !== color) {
+    socket.emit('undo-accept');
+    return;
+  }
+  if (state.pendingUndo && state.pendingUndo.by === color) return;
+  socket.emit('undo-request');
 });
 $(document).on('click', e => {
   const boardNode = $('#board')[0];
-  if (!boardNode || boardNode.contains(e.target)) return;
+  if (!boardNode) return;
+  if (boardNode.contains(e.target)) return;
+  if (window.matchMedia('(pointer: coarse)').matches) return;
   if (selectedSquare) {
     selectedSquare = null;
     highlightLegalMoves(null);
