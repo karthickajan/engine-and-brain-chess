@@ -60,6 +60,9 @@ body { background: var(--bg); color: var(--text); font: 15px/1.4 "Noto Sans", sy
   position: absolute; left: 0; right: 0; bottom: 0; height: 50%; background: #f4f4f4;
   border-radius: 8px; transition: height .15s ease;
 }
+#eval-rail.flip #eval-rail-fill {
+  top: 0; bottom: auto;
+}
 .eval-panel {
   background: #1f1e1d; border: 1px solid #393734; border-radius: 5px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px;
 }

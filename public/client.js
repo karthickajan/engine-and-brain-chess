@@ -28,14 +28,16 @@ class Engine {
     this.busy = false;
     this.queued = null;
     this.cur = null;
-    this.eval = 0;
     this.w.onmessage = ({ data }) => {
-      const scoreMatch = /score\s+(cp|mate)\s+(-?\d+)/i.exec(data || '');
-      if (scoreMatch) {
-        const type = scoreMatch[1].toLowerCase();
-        const val = Number(scoreMatch[2]);
-        this.eval = type === 'mate' ? val : val / 100;
-        this.onEval(type === 'mate' ? { kind: 'mate', value: val } : { kind: 'cp', value: val / 100 });
+      if (typeof data !== 'string') return;
+      const s = /^info .*?\bscore (cp|mate) (-?\d+)(?: (lowerbound|upperbound))?/i.exec(data);
+      if (s && !s[3]) {
+        const stm = (this.cur || '').split(' ')[1] === 'w' ? 1 : -1;
+        const n = Number(s[2]);
+        const score = s[1].toLowerCase() === 'mate'
+          ? { kind: 'mate', moves: Math.abs(n), winner: n === 0 ? -stm : Math.sign(n) * stm }
+          : { kind: 'cp', cp: n * stm };
+        this.onEval(score, this.cur);
       }
       const m = /^bestmove (\S+)/.exec(data);
       if (!m) return;
@@ -76,8 +78,7 @@ window.__lanChessDebug = () => ({
   turn: game.turn(),
 });
 let timerState = { mode: 'normal', limit: 180, increment: 0, white: 180, black: 180, active: 'w', started: false };
-let evalValue = 0;
-let evalMate = null;
+let evalScore = null;
 let evalEnabled = false;
 
 const other = c => (c === 'w' ? 'b' : 'w');
@@ -86,12 +87,21 @@ const myEngine = () => !!(color && state && state.engine[color]);
 const canPlay = () => !!(color && state && !state.result && state.turn === color);
 const key = s => [s.fen, s.result, color && s.engine[color]].join();
 const COLORS_OPP = () => ['w', 'b'].filter(c => c !== color);
-const formatEvalText = () => {
-  if (evalMate !== null && Number.isFinite(evalMate)) {
-    const mateMoves = Math.abs(evalMate);
-    return evalMate > 0 ? `#${mateMoves}` : `#-${mateMoves}`;
+
+const whitePct = e => {
+  if (!e) return 50;
+  if (e.kind === 'mate') return e.winner > 0 ? 100 : 0;
+  const cp = Math.max(-1000, Math.min(1000, e.cp));
+  return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1);
+};
+
+const evalText = e => {
+  if (!e) return '0.00';
+  if (e.kind === 'mate') {
+    if (e.moves === 0) return e.winner > 0 ? '1-0' : '0-1';
+    return `${e.winner > 0 ? '' : '-'}#${e.moves}`;
   }
-  return `${evalValue >= 0 ? '+' : ''}${evalValue.toFixed(2)}`;
+  return `${e.cp >= 0 ? '+' : ''}${(e.cp / 100).toFixed(2)}`;
 };
 
 function formatClock(seconds, includeIncrement = false) {
@@ -131,23 +141,16 @@ const engine = new Engine(
   (fen, mv) => {
     if (state && fen === state.fen && myEngine() && canPlay()) { hint = mv.slice(0, 2); paint(); }
   },
-  score => {
-    if (score && typeof score === 'object' && score.kind === 'mate') {
-      evalMate = Number.isFinite(score.value) ? score.value : null;
-      evalValue = evalMate !== null ? (evalMate > 0 ? 10 : -10) : 0;
-    } else {
-      evalMate = null;
-      evalValue = Number.isFinite(score && score.value !== undefined ? score.value : score) ? (score && score.value !== undefined ? score.value : score) : 0;
+  (score, fen) => {
+    if (state && fen === state.fen) {
+      evalScore = score;
+      updateEvalUI();
     }
-    updateEvalUI();
   }
 );
 
 function refreshHint() {
   hint = null;
-  evalValue = 0;
-  evalMate = null;
-  updateEvalUI();
   if (myEngine()) {
     engine.analyze(state.fen);
   } else {
@@ -156,23 +159,15 @@ function refreshHint() {
 }
 
 function updateEvalUI() {
-  const active = evalEnabled && myEngine() && Number.isFinite(evalValue);
-  $('#eval-value').text(formatEvalText());
+  const active = evalEnabled && myEngine() && !!state;
   $('#eval-panel').prop('hidden', !active);
   $('#eval-rail').prop('hidden', !active);
-  if (!active) {
-    $('#eval-fill').css('width', '50%');
-    $('#eval-rail-fill').css('height', '50%');
-    return;
-  }
-
-  const raw = evalMate !== null && Number.isFinite(evalMate) ? Math.abs(evalMate) : Math.abs(evalValue);
-  const pct = evalMate !== null && Number.isFinite(evalMate)
-    ? Math.max(18, Math.min(100, (raw / 10) * 100))
-    : Math.max(0, Math.min(100, ((raw + 10) / 20) * 100));
-  const pctHeight = Math.max(10, Math.min(100, pct));
+  if (!active) return;
+  const pct = whitePct(evalScore);
+  $('#eval-value').text(evalText(evalScore));
   $('#eval-fill').css('width', `${pct}%`);
-  $('#eval-rail-fill').css('height', `${pctHeight}%`);
+  $('#eval-rail-fill').css('height', `${pct}%`);
+  $('#eval-rail').toggleClass('flip', bottom() === 'b');
 }
 
 function syncOrientation() {
@@ -285,6 +280,8 @@ function renderMeta() {
   const pendingFromOpponent = !!state.pendingUndo && state.pendingUndo.by !== color;
   $('#undo-btn').text(pendingFromOpponent ? 'Accept undo' : (pendingByMe ? 'Undo pending' : 'Undo'));
   $('#undo-btn').prop('disabled', !color || !!state.result || !state.history.length || pendingByMe);
+
+  updateEvalUI();
 }
 
 function tryMove(from, to) {
@@ -374,7 +371,7 @@ $('#eval-btn').on('click', () => {
     engine.analyze(state.fen);
   }
 });
-$('#flip').on('click', () => { if (!state) return; flip = !flip; syncOrientation(); renderMeta(); paint(); });
+$('#flip').on('click', () => { if (!state) return; flip = !flip; syncOrientation(); renderMeta(); updateEvalUI(); paint(); });
 $('#undo-btn').on('click', () => {
   if (!state || !color || state.result) return;
   if (state.pendingUndo && state.pendingUndo.by !== color) {
